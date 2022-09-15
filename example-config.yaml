@@ -1,0 +1,30 @@
+dc: ldap.test.company
+
+createBaseFields: True
+baseFieldsList:
+  - dcObject
+  - admin
+  - groups
+  - users
+
+groups:
+  numerateFrom: 5000
+  cns: ['group1', 'group2', 'group3']
+
+users:
+  defFields:
+    objectClass: ['inetOrgPerson', 'posixAccount', 'shadowAccount']
+  defGroups:
+    - group1
+  numerateUidFrom: 10000
+  numerateGidFrom: 10000
+  userNames:
+    "uuser": "Unathorized user"
+    "test": "Test User"
+  customFields:
+    test:
+      homeDirectory: "/home/test2"
+  customGroups:
+    uuser: []
+  addToGroup:
+    "test": ['group3']
