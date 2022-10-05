@@ -105,23 +105,8 @@ if CONFIG["createBaseFields"]:
             raise Exception("Not implemented!")
         write_to_file("base_objects.ldif", obj)
 
-logging.info("Generating groups...")
-GROUP_IDS: Dict[str, int] = {}
-for group_id, group_cn in enumerate(
-    CONFIG["groups"]["cns"], CONFIG["groups"]["numerateFrom"]
-):
-    GROUP_IDS[group_cn] = group_id
-    write_to_file(
-        "groups.ldif",
-        represent_as_ldap_object(
-            {"cn": group_cn, "objectClass": "posixGroup", "gidNumber": group_id},
-            dn_field="cn",
-            ou="Groups",
-        )
-        + "\n",
-    )
-
 logging.info("Generating users...")
+GROUP_MEMBERSHIPS: Dict[str, List[str]] = {}
 USERS_DATA: Dict[str, Dict[str, Any]] = {}
 USERS_GROUPS: Dict[str, List[str]] = {}
 for index, (user_uid, user_name) in enumerate(CONFIG["users"]["userNames"].items()):
@@ -150,24 +135,37 @@ for index, (user_uid, user_name) in enumerate(CONFIG["users"]["userNames"].items
     for u, g in CONFIG["users"]["customGroups"].items():
         USERS_GROUPS[u] = g
 
+    for group_cn in USERS_GROUPS[user_uid]:
+        if group_cn not in GROUP_MEMBERSHIPS:
+            GROUP_MEMBERSHIPS[group_cn] = []
+
+        GROUP_MEMBERSHIPS[group_cn].append(
+            "uid=%s,ou=Users,%s"
+            % (user_uid, ",".join([f"dc={key}" for key in DC.split(".")]))
+        )
+
+for group_cn in CONFIG["groups"]["cns"]:
+
+    write_to_file(
+        "groups.ldif",
+        represent_as_ldap_object(
+            {
+                "cn": group_cn,
+                "objectClass": "groupOfNames",
+                "member": []
+                if group_cn not in GROUP_MEMBERSHIPS
+                else GROUP_MEMBERSHIPS[group_cn],
+            },
+            dn_field="cn",
+            ou="Groups",
+        )
+        + "\n",
+    )
+
 for user_data_object in USERS_DATA.values():
     write_to_file(
         "users.ldif",
         represent_as_ldap_object(user_data_object, dn_field="uid", ou="Users") + "\n",
     )
-
-logging.info("Generating add to groups file...")
-for uid, groups in USERS_GROUPS.items():
-    for group in groups:
-        write_to_file(
-            "add_to_group.ldif",
-            represent_as_ldap_object(
-                {"changetype": "modify", "add": "memberuid", "memberuid": uid},
-                dn_field="cn",
-                dn_value=group,
-                ou="Groups",
-            )
-            + "\n",
-        )
 
 dump_files()
