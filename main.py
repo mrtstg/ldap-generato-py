@@ -225,9 +225,11 @@ for group_cn in CONFIG["groups"]["cns"]:
         raise Exception("Group of names must have members!")
     group_data = {
         "cn": group_cn,
-        "objectClass": "groupOfNames",
+        "objectClass": ["groupOfNames"],
         "member": GROUP_MEMBERSHIPS[group_cn],
     }
+    if group_cn == CONFIG["samba"]["groupCn"]:
+        group_data["objectClass"].append("sambaGroupMapping")
     group_dn = generate_dn(group_data, "cn", "Groups")
     write_to_file(
         "groups.ldif",
