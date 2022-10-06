@@ -15,6 +15,7 @@ samba:
   migrate: true
   sid:
   groupCn:
+  groupGid:
 
 users:
   defFields:
