@@ -58,9 +58,10 @@ def generate_migration(dn: str, migration_data: List[dict]) -> str:
     for m_id, migration in enumerate(migration_data, 1):
         if m_id != 1:
             output += "-\n"
+        else:
+            output += "changetype: modify\n"
         m_type: str = migration["type"]
         field: str = migration["field"]
-        output += "changetype: modify\n"
         output += f"{m_type}: {field}\n"
         if m_type != "delete":
             value: Any = migration[field]
