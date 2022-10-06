@@ -231,6 +231,8 @@ for group_cn in CONFIG["groups"]["cns"]:
     if group_cn == CONFIG["samba"]["groupCn"]:
         group_data["objectClass"] = ["sambaGroupMapping", "posixGroup"]
         group_data["gidNumber"] = CONFIG["samba"]["groupGid"]
+        group_data["sambaSID"] = SAMBA_DOMAIN_SID + "-" + str(group_data["gidNumber"])
+        group_data["sambaGroupType"] = 2
     group_dn = generate_dn(group_data, "cn", "Groups")
     write_to_file(
         "groups.ldif",
