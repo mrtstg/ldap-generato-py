@@ -1,6 +1,8 @@
 import yaml
 import sys
 import os
+import time
+import hashlib
 import logging
 from typing import Any, Optional, Dict, Union, List
 
@@ -31,7 +33,7 @@ def dump_files():
             file.write(content)
 
 
-def represent_as_ldap_object(
+def generate_dn(
     data: LDAP_OBJECT,
     dn_field: Optional[str] = None,
     ou: Optional[str] = None,
@@ -48,6 +50,29 @@ def represent_as_ldap_object(
         output += "ou=%s," % ou
 
     output += ",".join([f"dc={key}" for key in DC.split(".")]) + "\n"
+    return output
+
+
+def generate_migration(dn: str, migration_data: List[dict]) -> str:
+    output = ""
+    for m_id, migration in enumerate(migration_data, 1):
+        if m_id != 1:
+            output += "-\n"
+        m_type: str = migration["type"]
+        field: str = migration["field"]
+        output += "changetype: modify\n"
+        output += f"{m_type}: {field}\n"
+        if m_type != "delete":
+            value: Any = migration[field]
+            output += f"{field}: {value}\n"
+    return dn + output
+
+
+def represent_as_ldap_object(
+    dn: str,
+    data: LDAP_OBJECT,
+) -> str:
+    output: str = f"{dn}"
     for key, value in data.items():
         if isinstance(value, list):
             for v in value:
@@ -62,41 +87,49 @@ if CONFIG["createBaseFields"]:
     base_fields: List[str] = CONFIG["baseFieldsList"]
     for field in base_fields:
         if field == "dcObject":
-            obj = (
-                represent_as_ldap_object(
-                    {
-                        "objectClass": ["top", "dcObject", "organization"],
-                        "o": DC,
-                        "dc": "ldap",
-                    }
-                )
-                + "\n"
-            )
+            dc_data = {
+                "objectClass": ["top", "dcObject", "organization"],
+                "o": DC,
+                "dc": "ldap",
+            }
+            obj = represent_as_ldap_object("", dc_data) + "\n"
         elif field == "admin":
+            admin_data = {
+                "objectClass": ["simpleSecurityObject", "organizationalRole"],
+                "cn": "admin",
+                "description": "LDAP admin",
+            }
+            dn = generate_dn(admin_data, "cn")
             obj = (
                 represent_as_ldap_object(
-                    {
-                        "objectClass": ["simpleSecurityObject", "organizationalRole"],
-                        "cn": "admin",
-                        "description": "LDAP admin",
-                    },
-                    dn_field="cn",
+                    dn,
+                    admin_data,
                 )
                 + "\n"
             )
         elif field == "groups":
+            groups_ou_data = {
+                "ou": "Groups",
+                "objectClass": ["top", "organizationalUnit"],
+            }
+            dn = generate_dn(groups_ou_data, ou="Groups")
             obj = (
                 represent_as_ldap_object(
-                    {"ou": "Groups", "objectClass": ["top", "organizationalUnit"]},
-                    ou="Groups",
+                    dn,
+                    groups_ou_data,
                 )
                 + "\n"
             )
         elif field == "users":
+            users_ou_data = {
+                "ou": "Users",
+                "objectClass": ["top", "organizationalUnit"],
+            }
+            dn = generate_dn(users_ou_data, ou="Users")
             obj = (
                 represent_as_ldap_object(
-                    {"ou": "Users", "objectClass": ["top", "organizationalUnit"]},
-                    ou="Users",
+                    dn,
+                    users_ou_data,
                 )
                 + "\n"
             )
@@ -106,6 +139,8 @@ if CONFIG["createBaseFields"]:
         write_to_file("base_objects.ldif", obj)
 
 logging.info("Generating users...")
+MIGRATE_SAMBA: bool = CONFIG["samba"]["migrate"]
+SAMBA_DOMAIN_SID: str = CONFIG["samba"]["sid"]
 GROUP_MEMBERSHIPS: Dict[str, List[str]] = {}
 USERS_DATA: Dict[str, Dict[str, Any]] = {}
 USERS_GROUPS: Dict[str, List[str]] = {}
@@ -144,28 +179,65 @@ for index, (user_uid, user_name) in enumerate(CONFIG["users"]["userNames"].items
             % (user_uid, ",".join([f"dc={key}" for key in DC.split(".")]))
         )
 
-for group_cn in CONFIG["groups"]["cns"]:
+    if MIGRATE_SAMBA:
+        password_hash: str = hashlib.new(
+            "md4", USERS_DATA[user_uid]["userPassword"].encode("UTF-16LE")
+        ).hexdigest()
+        user_sid: str = (
+            SAMBA_DOMAIN_SID + "-" + str(USERS_DATA[user_uid]["uidNumber"] * 2 + 1000)
+        )
+        user_dn: str = generate_dn(USERS_DATA[user_uid], "uid", "Users")
+        write_to_file(
+            "samba.ldif",
+            generate_migration(
+                user_dn,
+                [
+                    {
+                        "type": "add",
+                        "field": "objectClass",
+                        "objectClass": "sambaSamAccount",
+                    },
+                    {"type": "add", "field": "sambaSID", "sambaSID": user_sid},
+                    {
+                        "type": "add",
+                        "field": "sambaPasswordHistory",
+                        "sambaPasswordHistory": "00000000000000000000000000000000000000000000000000000000",
+                    },
+                    {
+                        "type": "add",
+                        "field": "sambaNTPassword",
+                        "sambaNTPassword": password_hash,
+                    },
+                    {
+                        "type": "add",
+                        "field": "sambaPwdLastSet",
+                        "sambaPwdLastSet": int(time.time()),
+                    },
+                    {"type": "add", "field": "sambaAcctFlags", "sambaAcctFlags": "[U]"},
+                ],
+            )
+            + "\n",
+        )
 
+for group_cn in CONFIG["groups"]["cns"]:
+    if group_cn not in GROUP_MEMBERSHIPS:
+        raise Exception("Group of names must have members!")
+    group_data = {
+        "cn": group_cn,
+        "objectClass": "groupOfNames",
+        "member": GROUP_MEMBERSHIPS[group_cn],
+    }
+    group_dn = generate_dn(group_data, "cn", "Groups")
     write_to_file(
         "groups.ldif",
-        represent_as_ldap_object(
-            {
-                "cn": group_cn,
-                "objectClass": "groupOfNames",
-                "member": []
-                if group_cn not in GROUP_MEMBERSHIPS
-                else GROUP_MEMBERSHIPS[group_cn],
-            },
-            dn_field="cn",
-            ou="Groups",
-        )
-        + "\n",
+        represent_as_ldap_object(group_dn, group_data) + "\n",
     )
 
 for user_data_object in USERS_DATA.values():
+    user_dn = generate_dn(user_data_object, "uid", "Users")
     write_to_file(
         "users.ldif",
-        represent_as_ldap_object(user_data_object, dn_field="uid", ou="Users") + "\n",
+        represent_as_ldap_object(user_dn, user_data_object) + "\n",
     )
 
 dump_files()
