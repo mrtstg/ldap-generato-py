@@ -11,6 +11,10 @@ groups:
   numerateFrom: 5000
   cns: ['group1', 'group2', 'group3']
 
+samba:
+  migrate: true
+  sid:
+
 users:
   defFields:
     objectClass: ['inetOrgPerson', 'posixAccount', 'shadowAccount']
